@@ -2,7 +2,9 @@
 import argparse
 import logging
 import sys
+from typing import Final
 
+from Cryptodome.Cipher import AES
 from rich.console import Console
 from rich.logging import RichHandler
 
@@ -19,7 +21,11 @@ program_name = "sony-bdp-fw-crypter"
 log = logging.getLogger(program_name)
 
 # fmt: off
-stupid_lut_dec = bytes((
+
+# frf_key_spoof: Final = bytes.fromhex("ffeeddccbbaa99887766554433221100" * 2)
+frf_key: Final = bytes.fromhex("e252e7ac4acafa7d3d1841307ecee132e2f75877a12a816aac8bb792ca5bfcff")
+
+stupid_lut_dec: Final = bytes((
     0xe8, 0x4d, 0x63, 0xf4, 0xf8, 0xa9, 0x21, 0x9c,
     0xc7, 0x82, 0xcd, 0xe3, 0xc1, 0xce, 0xc0, 0xfa,
     0xe7, 0xd6, 0x96, 0x46, 0x12, 0x03, 0x14, 0x33,
@@ -54,7 +60,7 @@ stupid_lut_dec = bytes((
     0x05, 0xd1, 0xdd, 0xc9, 0xaf, 0xb7, 0xa2, 0xb3,
 ))
 
-stupid_lut_enc = bytes((
+stupid_lut_enc: Final = bytes((
     0xc8, 0x36, 0xa5, 0x15, 0x86, 0xf8, 0x6a, 0xde,
     0x52, 0xc7, 0x3e, 0xb5, 0x2d, 0xa7, 0x21, 0x9c,
     0x19, 0x96, 0x14, 0x94, 0x16, 0x98, 0x1c, 0xa0,
@@ -96,24 +102,35 @@ def get_arg_parser() -> argparse.ArgumentParser:
     enc_dec = parser.add_mutually_exclusive_group()
     enc_dec.add_argument("-e", "--encrypt", action="store_true", help="Do encryption.")
     enc_dec.add_argument("-d", "--decrypt", action="store_true", help="Do decryption.")
-    parser.add_argument("-i", "--in", dest="in_file", required=True, help="BDP FW input file.")
-    parser.add_argument("-o", "--out", dest="out_file", required=True, help="BDP FW output file.")
+    parser.add_argument("-f", "--frf", action="store_true", help="FRF file instead of FW file.")
+    parser.add_argument("-i", "--in", dest="in_file", required=True, help="BDP input file.")
+    parser.add_argument("-o", "--out", dest="out_file", required=True, help="BDP output file.")
     return parser
 
 
 def real_main(args: argparse.Namespace) -> int:
     if not (args.encrypt ^ args.decrypt):
         raise ValueError("Must specify one of, but not both, -e/--encrypt or -d/--decrypt.")
-    if not args.encrypt:
-        lut = stupid_lut_dec
+    if not args.frf:
+        if not args.encrypt:
+            lut = stupid_lut_dec
+        else:
+            lut = stupid_lut_enc
+        with open(args.in_file, "rb") as inf, open(args.out_file, "wb") as of:
+            ibuf = inf.read()
+            obuf = bytearray(len(ibuf))
+            for i in range(len(ibuf)):
+                obuf[i] = lut[ibuf[i]]
+            of.write(obuf)
     else:
-        lut = stupid_lut_enc
-    with open(args.in_file, "rb") as inf, open(args.out_file, "wb") as of:
-        ibuf = inf.read()
-        obuf = bytearray(len(ibuf))
-        for i in range(len(ibuf)):
-            obuf[i] = lut[ibuf[i]]
-        of.write(obuf)
+        with open(args.in_file, "rb") as inf:
+            ibuf = inf.read()
+            if not args.encrypt:
+                cipher = AES.new(frf_key, AES.MODE_CBC, iv=ibuf[:16])
+                pt = cipher.decrypt(ibuf[16:])
+                print(f"pt hex: {pt.hex()} raw: {pt!r}")
+            else:
+                raise NotImplementedError()
     return 0
 
 

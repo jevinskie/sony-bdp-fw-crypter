@@ -1,1 +1,2 @@
+pycryptodomex>=3.20.0
 rich>=13.7.1
